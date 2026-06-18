@@ -1,19 +1,16 @@
 # main.py
-import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from typing import List
 
 from langchain.agents import create_agent
-from langchain.agents.structured_output import ToolStrategy
 from langchain_deepseek import ChatDeepSeek
 from tools import search_tool, wiki_tool, save_file_tool
 
-# 1. 加载 .env 中的 API Key（需要在 .env 里配置 DEEPSEEK_API_KEY=sk-xxxx）
 load_dotenv()
 
 
-# 2. 定义我们期望 AI 最终返回的结构化模型
+# 定义结构化输出模型
 class ResearchResponse(BaseModel):
     topic: str = Field(description="研究的主题")
     summary: str = Field(description="针对该主题生成的详细总结报告")
@@ -21,20 +18,14 @@ class ResearchResponse(BaseModel):
     tools_used: List[str] = Field(description="在执行任务时调用的工具名称")
 
 
-# 3. 汇总工具箱列表
 tools = [search_tool, wiki_tool, save_file_tool]
 
-# 4. 系统提示词
 SYSTEM_PROMPT = (
     "你是一个极其专业的AI科研助手。你的任务是解答用户的提问，并在必要时使用工具进行调研。"
-    "工具调用规则：最多调用5次工具，收集到足够信息后立即整理输出，不要重复搜索相似内容。"
+    "收集到足够信息后立即停止搜索，不要重复搜索相似内容。"
 )
 
-# 5. 创建具备工具调用能力、且自动产出结构化输出的 Agent 实例
-#    deepseek-v4-flash 默认是思考模式（会输出 reasoning_content），
-#    而 ToolStrategy 为了强制产出结构化结果，会要求模型强制调用某个工具（tool_choice 强制模式）。
-#    DeepSeek 的思考模式和强制 tool_choice 是互斥的，会报 400 "Thinking mode does not support this tool_choice"。
-#    所以这里显式传 extra_body 关闭 thinking，用非思考模式跑（速度更快，且这个任务本身不需要复杂推理）。
+# Step 1 — 负责调工具搜集信息的 Agent（不绑定结构化输出，自然停止）
 llm = ChatDeepSeek(
     model="deepseek-v4-flash",
     extra_body={"thinking": {"type": "disabled"}},
@@ -44,16 +35,20 @@ agent = create_agent(
     model=llm,
     tools=tools,
     system_prompt=SYSTEM_PROMPT,
-    response_format=ToolStrategy(ResearchResponse),
 )
 
+# Step 2 — 负责把原始信息整理成结构化输出的 LLM（单次调用，无工具）
+llm_structured = llm.with_structured_output(ResearchResponse)
+
+
 if __name__ == "__main__":
-    # 6. 获取用户输入的调研指令
     user_query = input("您想要研究什么主题？(例如：帮我研究 LangChain 的应用，并保存到文件中): ")
 
-    # 7. 流式运行，实时打印进度
+    # --- Phase 1: Agent 调工具搜集原始信息 ---
     print("\n[系统提示] Agent 开始思考并查阅资料...\n")
-    result = None
+    messages = []
+    tools_called = []
+
     try:
         for chunk in agent.stream(
             {"messages": [{"role": "user", "content": user_query}]},
@@ -61,42 +56,47 @@ if __name__ == "__main__":
             config={"recursion_limit": 10},
         ):
             for node, update in chunk.items():
+                msgs = update.get("messages", [])
+                messages.extend(msgs)
                 if node == "tools":
-                    for msg in update.get("messages", []):
+                    for msg in msgs:
                         tool_name = getattr(msg, "name", "")
-                        print(f"  🔧 调用工具: {tool_name}")
+                        if tool_name:
+                            tools_called.append(tool_name)
+                            print(f"  🔧 调用工具: {tool_name}")
                 elif node == "agent":
-                    for msg in update.get("messages", []):
+                    for msg in msgs:
                         calls = getattr(msg, "tool_calls", [])
                         for call in calls:
                             print(f"  🤔 决定调用: {call.get('name', '')}（{call.get('args', {})}）")
-            result = chunk
     except Exception as e:
-        print(f"\n[警告] Agent 提前终止: {e}\n正在尝试输出已收集的结果...\n")
+        # GraphRecursionError 是正常兜底（工具调用达到上限），直接进入 Phase 2
+        # 其他异常才提示用户
+        if "GraphRecursionError" not in type(e).__name__ and "recursion" not in str(e).lower():
+            print(f"\n[错误] 调研过程出现异常: {e}")
 
-    # 8. 从最后一个 chunk 提取结构化输出
-    try:
-        # stream 结束后从最终状态取结构化结果
-        final = None
-        for node, update in (result or {}).items():
-            if "structured_response" in update:
-                final = update["structured_response"]
-                break
+    if not messages:
+        print("[错误] 没有收集到任何信息，请检查网络或 API Key。")
+        exit(1)
 
-        if final is None:
-            raise ValueError("未找到 structured_response")
+    # --- Phase 2: 单次 LLM 调用，整理成结构化输出 ---
+    print("\n[系统提示] 正在整理结构化结果...\n")
 
-        print("\n" + "=" * 20 + " 格式化研究结果 " + "=" * 20)
-        print(f"【研究主题】: {final.topic}")
-        print(f"【详细报告】: {final.summary}")
-        print(f"【参考来源】: {final.sources}")
-        print(f"【调用工具】: {final.tools_used}")
+    # 把搜集到的所有内容拼成一段上下文，让 LLM 格式化
+    raw_content = "\n\n".join(
+        getattr(m, "content", "") for m in messages if getattr(m, "content", "")
+    )
+    format_prompt = (
+        f"用户的研究问题是：{user_query}\n\n"
+        f"以下是调研过程收集到的原始信息：\n{raw_content}\n\n"
+        f"调用过的工具：{list(dict.fromkeys(tools_called))}\n\n"
+        "请根据以上信息，整理出结构化的研究报告。"
+    )
 
-    except Exception as e:
-        print(f"\n[错误] 结构化结果解析失败。原因: {e}")
-        if result:
-            for node, update in result.items():
-                msgs = update.get("messages", [])
-                if msgs:
-                    last = msgs[-1]
-                    print(f"原始输出: {getattr(last, 'content', last)}")
+    final: ResearchResponse = llm_structured.invoke(format_prompt)
+
+    print("=" * 20 + " 格式化研究结果 " + "=" * 20)
+    print(f"【研究主题】: {final.topic}")
+    print(f"【详细报告】: {final.summary}")
+    print(f"【参考来源】: {final.sources}")
+    print(f"【调用工具】: {final.tools_used}")
