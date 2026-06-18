@@ -9,32 +9,44 @@
 
 [系统提示] Agent 开始思考并查阅资料...
 
+  🤔 决定调用: wikipedia_search（{'query': 'LangChain'}）
+  🔧 调用工具: wikipedia_search
+  🤔 决定调用: search（{'query': 'LangChain 应用场景 2024'}）
+  🔧 调用工具: search
+
+[系统提示] 正在整理结构化结果...
+
 ==================== 格式化研究结果 ====================
 【研究主题】: LangChain 的应用
 【详细报告】: LangChain 是一个用于构建 LLM 应用的框架...
 【参考来源】: ['https://...', 'https://...']
-【调用工具】: ['search', 'wikipedia_search', 'save_text_to_file']
+【调用工具】: ['wikipedia_search', 'search']
 ```
 
 ## 架构
 
 ```mermaid
 flowchart TD
-    A([👤 用户输入问题]) --> B[main.py 启动 Agent]
-    B --> C{🤖 DeepSeek LLM\n分析问题}
+    A([👤 用户输入问题]) --> B[Phase 1: Agent 调工具搜集信息]
+
+    B --> C{🤖 DeepSeek LLM\n决定下一步}
     C -->|需要最新资讯| D[🔍 search\nDuckDuckGo 联网搜索]
     C -->|需要百科知识| E[📖 wikipedia_search\n维基百科查询]
     C -->|需要保存结果| F[💾 save_text_to_file\n写入本地 .txt 文件]
-    C -->|已有足够信息| G[汇总所有信息]
-    D --> G
-    E --> G
-    F --> G
-    G --> H[🧠 LLM 生成结构化回答\nResearchResponse]
+    C -->|信息足够，自然停止| G
+
+    D --> C
+    E --> C
+    F --> C
+
+    G[📦 汇总原始信息] --> H[Phase 2: LLM 整理结构化输出\nwith_structured_output]
     H --> I([📋 输出结果\n主题 / 报告 / 来源 / 调用工具])
+
     style A fill:#4A9EFF,color:#fff
     style I fill:#22C55E,color:#fff
     style C fill:#F59E0B,color:#fff
     style H fill:#8B5CF6,color:#fff
+    style B fill:#1E293B,color:#fff
 ```
 
 ## 项目结构
@@ -115,7 +127,7 @@ python main.py
 - [ ] 多轮对话记忆（Memory）
 - [ ] ReAct 推理循环（观察 → 思考 → 行动）
 - [ ] 工具失败自动重试
-- [ ] 流式输出（Streaming）
+- [x] 流式输出（Streaming）— 实时显示每次工具调用
 - [ ] Human-in-the-loop 确认机制
 
 ## License
