@@ -10,7 +10,7 @@ NETWORK_TIMEOUT = 10
 # 它只认自己专属的 DDGS_PROXY 环境变量，或者显式传入的 proxy 参数。
 # 如果你本地有代理（比如 Clash/V2ray 之类），把端口改成你自己的代理端口。
 # 如果没有代理需求，把这一行改成 PROXY = None 即可。
-PROXY = "http://127.0.0.1:51837"
+PROXY = None
 
 
 # 1. 联网搜索工具

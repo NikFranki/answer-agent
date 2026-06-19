@@ -89,11 +89,11 @@ if __name__ == "__main__":
     format_prompt = (
         f"用户的研究问题是：{user_query}\n\n"
         f"以下是调研过程收集到的原始信息：\n{raw_content}\n\n"
-        f"调用过的工具：{list(dict.fromkeys(tools_called))}\n\n"
         "请根据以上信息，整理出结构化的研究报告。"
     )
 
     final: ResearchResponse = llm_structured.invoke(format_prompt)
+    final = final.model_copy(update={"tools_used": list(dict.fromkeys(tools_called))})
 
     print("=" * 20 + " 格式化研究结果 " + "=" * 20)
     print(f"【研究主题】: {final.topic}")
