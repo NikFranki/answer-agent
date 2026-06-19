@@ -5,7 +5,9 @@
 ## 效果演示
 
 ```
-您想要研究什么主题？帮我研究 LangChain 的应用，并保存到文件中
+AI 科研助手已启动，输入 'quit' 退出
+
+您想要研究什么主题？: 帮我研究 LangChain 的应用，并保存到文件中
 
 [系统提示] Agent 开始思考并查阅资料...
 
@@ -21,32 +23,42 @@
 【详细报告】: LangChain 是一个用于构建 LLM 应用的框架...
 【参考来源】: ['https://...', 'https://...']
 【调用工具】: ['wikipedia_search', 'search']
+
+您想要研究什么主题？: 它和 LlamaIndex 有什么区别？
+
+[系统提示] Agent 开始思考并查阅资料...（携带上轮对话上下文）
+...
 ```
 
 ## 架构
 
 ```mermaid
 flowchart TD
-    A([👤 用户输入问题]) --> B[Phase 1: Agent 调工具搜集信息]
+    U([👤 用户输入问题]) --> M
 
-    B --> C{🤖 DeepSeek LLM\n决定下一步}
-    C -->|需要最新资讯| D[🔍 search\nDuckDuckGo 联网搜索]
-    C -->|需要百科知识| E[📖 wikipedia_search\n维基百科查询]
-    C -->|需要保存结果| F[💾 save_text_to_file\n写入本地 .txt 文件]
-    C -->|信息足够，自然停止| G
+    M[(💬 对话历史\nchat_history)] --> A
+    A([Phase 1: Agent 调工具搜集信息]) --> B
 
-    D --> C
-    E --> C
-    F --> C
+    B{🤖 DeepSeek LLM\n决定下一步}
+    B -->|需要最新资讯| D[🔍 search\nDuckDuckGo 联网搜索]
+    B -->|需要百科知识| E[📖 wikipedia_search\n维基百科查询]
+    B -->|需要保存结果| F[💾 save_text_to_file\n写入本地 .txt 文件]
+    B -->|信息足够，自然停止| G
+
+    D --> B
+    E --> B
+    F --> B
 
     G[📦 汇总原始信息] --> H[Phase 2: LLM 整理结构化输出\nwith_structured_output]
     H --> I([📋 输出结果\n主题 / 报告 / 来源 / 调用工具])
+    I --> M
 
-    style A fill:#4A9EFF,color:#fff
+    style U fill:#4A9EFF,color:#fff
     style I fill:#22C55E,color:#fff
-    style C fill:#F59E0B,color:#fff
+    style B fill:#F59E0B,color:#fff
     style H fill:#8B5CF6,color:#fff
-    style B fill:#1E293B,color:#fff
+    style A fill:#1E293B,color:#fff
+    style M fill:#0F172A,color:#fff
 ```
 
 ## 项目结构
@@ -124,7 +136,7 @@ python main.py
 
 这是一个**入门 demo**，有意保持简洁。以下是已知的局限，欢迎 PR：
 
-- [ ] 多轮对话记忆（Memory）
+- [x] 多轮对话记忆（Memory）— `chat_history` 跨轮传递上下文
 - [ ] ReAct 推理循环（观察 → 思考 → 行动）
 - [ ] 工具失败自动重试
 - [x] 流式输出（Streaming）— 实时显示每次工具调用

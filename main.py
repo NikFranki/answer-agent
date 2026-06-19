@@ -42,61 +42,73 @@ llm_structured = llm.with_structured_output(ResearchResponse)
 
 
 if __name__ == "__main__":
-    user_query = input("您想要研究什么主题？(例如：帮我研究 LangChain 的应用，并保存到文件中): ")
+    chat_history = []  # 累积对话历史，格式：[{role, content}, ...]
+    print("AI 科研助手已启动，输入 'quit' 退出\n")
 
-    # --- Phase 1: Agent 调工具搜集原始信息 ---
-    print("\n[系统提示] Agent 开始思考并查阅资料...\n")
-    messages = []
-    tools_called = []
+    while True:
+        user_query = input("您想要研究什么主题？: ").strip()
+        if not user_query:
+            continue
+        if user_query.lower() in ("quit", "exit", "退出", "q"):
+            print("再见！")
+            break
 
-    try:
-        for chunk in agent.stream(
-            {"messages": [{"role": "user", "content": user_query}]},
-            stream_mode="updates",
-            config={"recursion_limit": 10},
-        ):
-            for node, update in chunk.items():
-                msgs = update.get("messages", [])
-                messages.extend(msgs)
-                if node == "tools":
-                    for msg in msgs:
-                        tool_name = getattr(msg, "name", "")
-                        if tool_name:
-                            tools_called.append(tool_name)
-                            print(f"  🔧 调用工具: {tool_name}")
-                elif node == "agent":
-                    for msg in msgs:
-                        calls = getattr(msg, "tool_calls", [])
-                        for call in calls:
-                            print(f"  🤔 决定调用: {call.get('name', '')}（{call.get('args', {})}）")
-    except Exception as e:
-        # GraphRecursionError 是正常兜底（工具调用达到上限），直接进入 Phase 2
-        # 其他异常才提示用户
-        if "GraphRecursionError" not in type(e).__name__ and "recursion" not in str(e).lower():
-            print(f"\n[错误] 调研过程出现异常: {e}")
+        # --- Phase 1: Agent 调工具搜集原始信息 ---
+        print("\n[系统提示] Agent 开始思考并查阅资料...\n")
+        messages = []
+        tools_called = []
 
-    if not messages:
-        print("[错误] 没有收集到任何信息，请检查网络或 API Key。")
-        exit(1)
+        try:
+            for chunk in agent.stream(
+                {"messages": chat_history + [{"role": "user", "content": user_query}]},
+                stream_mode="updates",
+                config={"recursion_limit": 10},
+            ):
+                for node, update in chunk.items():
+                    msgs = update.get("messages", [])
+                    messages.extend(msgs)
+                    if node == "tools":
+                        for msg in msgs:
+                            tool_name = getattr(msg, "name", "")
+                            if tool_name:
+                                tools_called.append(tool_name)
+                                print(f"  🔧 调用工具: {tool_name}")
+                    elif node == "agent":
+                        for msg in msgs:
+                            calls = getattr(msg, "tool_calls", [])
+                            for call in calls:
+                                print(f"  🤔 决定调用: {call.get('name', '')}（{call.get('args', {})}）")
+        except Exception as e:
+            # GraphRecursionError 是正常兜底（工具调用达到上限），直接进入 Phase 2
+            # 其他异常才提示用户
+            if "GraphRecursionError" not in type(e).__name__ and "recursion" not in str(e).lower():
+                print(f"\n[错误] 调研过程出现异常: {e}")
 
-    # --- Phase 2: 单次 LLM 调用，整理成结构化输出 ---
-    print("\n[系统提示] 正在整理结构化结果...\n")
+        if not messages:
+            print("[错误] 没有收集到任何信息，请检查网络或 API Key。\n")
+            continue
 
-    # 把搜集到的所有内容拼成一段上下文，让 LLM 格式化
-    raw_content = "\n\n".join(
-        getattr(m, "content", "") for m in messages if getattr(m, "content", "")
-    )
-    format_prompt = (
-        f"用户的研究问题是：{user_query}\n\n"
-        f"以下是调研过程收集到的原始信息：\n{raw_content}\n\n"
-        "请根据以上信息，整理出结构化的研究报告。"
-    )
+        # --- Phase 2: 单次 LLM 调用，整理成结构化输出 ---
+        print("\n[系统提示] 正在整理结构化结果...\n")
 
-    final: ResearchResponse = llm_structured.invoke(format_prompt)
-    final = final.model_copy(update={"tools_used": list(dict.fromkeys(tools_called))})
+        raw_content = "\n\n".join(
+            getattr(m, "content", "") for m in messages if getattr(m, "content", "")
+        )
+        format_prompt = (
+            f"用户的研究问题是：{user_query}\n\n"
+            f"以下是调研过程收集到的原始信息：\n{raw_content}\n\n"
+            "请根据以上信息，整理出结构化的研究报告。"
+        )
 
-    print("=" * 20 + " 格式化研究结果 " + "=" * 20)
-    print(f"【研究主题】: {final.topic}")
-    print(f"【详细报告】: {final.summary}")
-    print(f"【参考来源】: {final.sources}")
-    print(f"【调用工具】: {final.tools_used}")
+        final: ResearchResponse = llm_structured.invoke(format_prompt)
+        final = final.model_copy(update={"tools_used": list(dict.fromkeys(tools_called))})
+
+        print("=" * 20 + " 格式化研究结果 " + "=" * 20)
+        print(f"【研究主题】: {final.topic}")
+        print(f"【详细报告】: {final.summary}")
+        print(f"【参考来源】: {final.sources}")
+        print(f"【调用工具】: {final.tools_used}\n")
+
+        # 把本轮对话存入历史，供下一轮使用
+        chat_history.append({"role": "user", "content": user_query})
+        chat_history.append({"role": "assistant", "content": final.summary})
