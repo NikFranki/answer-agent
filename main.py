@@ -25,7 +25,7 @@ SYSTEM_PROMPT = (
     "收集到足够信息后立即停止搜索，不要重复搜索相似内容。"
 )
 
-# Step 1 — 负责调工具搜集信息的 Agent（不绑定结构化输出，自然停止）
+# Step 1 — 负责调工具搜集信息的 Agent（thinking 与工具调用不兼容，必须关闭）
 llm = ChatDeepSeek(
     model="deepseek-v4-flash",
     extra_body={"thinking": {"type": "disabled"}},
@@ -37,8 +37,11 @@ agent = create_agent(
     system_prompt=SYSTEM_PROMPT,
 )
 
-# Step 2 — 负责把原始信息整理成结构化输出的 LLM（单次调用，无工具）
-llm_structured = llm.with_structured_output(ResearchResponse)
+# Step 2 — 负责整理结构化输出的 LLM（with_structured_output 底层用 tool_choice，不兼容 thinking）
+llm_structured = ChatDeepSeek(
+    model="deepseek-v4-flash",
+    extra_body={"thinking": {"type": "disabled"}},
+).with_structured_output(ResearchResponse)
 
 
 if __name__ == "__main__":
@@ -75,6 +78,9 @@ if __name__ == "__main__":
                                 print(f"  🔧 调用工具: {tool_name}")
                     elif node == "agent":
                         for msg in msgs:
+                            thinking = getattr(msg, "additional_kwargs", {}).get("reasoning_content", "")
+                            if thinking:
+                                print(f"  💭 推理: {thinking}\n")
                             calls = getattr(msg, "tool_calls", [])
                             for call in calls:
                                 print(f"  🤔 决定调用: {call.get('name', '')}（{call.get('args', {})}）")
@@ -88,9 +94,7 @@ if __name__ == "__main__":
             print("[错误] 没有收集到任何信息，请检查网络或 API Key。\n")
             continue
 
-        # --- Phase 2: 单次 LLM 调用，整理成结构化输出 ---
-        print("\n[系统提示] 正在整理结构化结果...\n")
-
+        # --- Phase 1.5: 显示模型推理过程（thinking 模式，无工具） ---
         raw_content = "\n\n".join(
             getattr(m, "content", "") for m in messages if getattr(m, "content", "")
         )
@@ -99,6 +103,21 @@ if __name__ == "__main__":
             f"以下是调研过程收集到的原始信息：\n{raw_content}\n\n"
             "请根据以上信息，整理出结构化的研究报告。"
         )
+
+        print("\n[系统提示] 模型正在推理...\n")
+        thinking_llm = ChatDeepSeek(
+            model="deepseek-v4-flash",
+            extra_body={"thinking": {"type": "enabled"}},
+        )
+        thinking_msg = thinking_llm.invoke(format_prompt)
+        reasoning = thinking_msg.additional_kwargs.get("reasoning_content", "")
+        if reasoning:
+            print("💭 推理过程:")
+            print(reasoning)
+            print()
+
+        # --- Phase 2: 单次 LLM 调用，整理成结构化输出 ---
+        print("\n[系统提示] 正在整理结构化结果...\n")
 
         final: ResearchResponse = llm_structured.invoke(format_prompt)
         final = final.model_copy(update={"tools_used": list(dict.fromkeys(tools_called))})
